@@ -1,7 +1,5 @@
 import os
-import sys
 from pathlib import Path
-import re
 import httpx
 from typing import Optional, Dict, Any, Union
 from mcp.server.fastmcp import Context, FastMCP, Image
@@ -67,21 +65,6 @@ async def _make_request(
 
         response.raise_for_status()
         return response
-
-
-def find_writable_directory():
-    possible_paths = ["/tmp", "/var/tmp", "/dev/shm", os.getcwd()]
-    for path in possible_paths:
-        test_file = os.path.join(path, "write_test.txt")
-        try:
-            with open(test_file, "w") as f:
-                f.write("test")
-            os.remove(test_file)
-            logger.info("Writable path found: %s", path)
-            return path
-        except Exception as e:
-            logger.info("Path not writable: %s (%s)", path, e)
-    raise RuntimeError("No writable path found.")
 
 
 def write_file(directory: str, filename: str, content: bytes) -> Path:
