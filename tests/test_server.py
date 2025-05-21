@@ -1,6 +1,7 @@
-import base64
-from mcp.types import ImageContent
+from pathlib import Path
+from mcp.types import TextContent
 import pytest
+from unittest.mock import patch, Mock
 from mcp.shared.memory import (
     create_connected_server_and_client_session as client_session,
 )
@@ -15,10 +16,17 @@ async def test_tool_functionality(httpx_mock: HTTPXMock):
         content=b"some fake image bytes",
     )
 
-    async with client_session(mcp._mcp_server) as client:
-        result = await client.call_tool("export_chart", {"chart_id": "ZZZZZZ"})
+    with patch(
+        "datawrapper_mcp_server.server.write_file", new=Mock()
+    ) as mock_write_file:
+        mock_write_file.return_value = Path("/tmp/ZZZZZZ.png")
 
-        assert not result.isError
-        image = result.content[0]
-        assert isinstance(image, ImageContent)
-        assert base64.b64decode(image.data) == b"some fake image bytes"
+        async with client_session(mcp._mcp_server) as client:
+            result = await client.call_tool(
+                "export_chart", {"chart_id": "ZZZZZZ", "filepath": "ZZZZZZ.png"}
+            )
+            assert not result.isError
+            assert len(result.content) == 1
+            assert isinstance(result.content[0], TextContent)
+            assert result.content[0].text == "Chart exported to /tmp/ZZZZZZ.png"
+            mock_write_file.assert_called_once()
