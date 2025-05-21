@@ -29,5 +29,5 @@ tail -n 20 -F ~/Library/Logs/Claude/mcp*.log
 Test this MCP server interactively with [inspector](https://github.com/modelcontextprotocol/inspector):
 
 ```bash
-uv run mcp dev src/datawraper/server.py
+uv run mcp dev src/datawrapper_mcp_server/server.py
 ```

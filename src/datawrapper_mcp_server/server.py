@@ -2,7 +2,6 @@ import os
 import httpx
 from typing import Optional, Dict, Any, Union
 from mcp.server.fastmcp import Context, FastMCP, Image
-from mcp.types import ImageContent
 
 API_KEY = os.environ.get("DATAWRAPPER_API_KEY", "")
 API_BASE_URL = "https://api.datawrapper.de/v3"
@@ -54,10 +53,12 @@ async def _make_request(
 
         response.raise_for_status()
 
-        if "json" in response.headers["content-type"]:
-            return response.json()
-        else:
-            return response.content
+        return response.content
+
+        # if "json" in response.headers["content-type"]:
+        #     return response.json()
+        # else:
+        #     return response.content
 
 
 @mcp.tool()
@@ -96,7 +97,7 @@ async def export_chart(
     height: Optional[int] = None,
     plain: bool = False,
     transparent: bool = False,
-) -> ImageContent:
+) -> Image:
     """
     Export a chart to different formats
 
