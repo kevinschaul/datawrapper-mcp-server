@@ -56,21 +56,28 @@ async def _make_request(
     url = f"{API_BASE_URL}/{endpoint}"
 
     async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.request(
-            method=method,
-            url=url,
-            headers=headers,
-            params=params,
-            data=data,
-            json=json_data,
-            files=files,
-        )
+        request_params = {
+            "method": method,
+            "url": url,
+            "headers": headers,
+            "params": params,
+            "data": data,
+            "json": json_data,
+            "files": files,
+        }
+        logger.info(request_params)
+        response = await client.request(**request_params)
 
-        await ctx.log(
-            level="info",
-            message=f"response: {response}",
-        )
-        logger.info(f"eprint response: {response}")
+        content_type = response.headers.get("content-type", "")
+        if content_type and (
+            "image" in content_type or "application/octet-stream" in content_type
+        ):
+            log_message = f"response: <binary data> [{len(response.content)} bytes]"
+        else:
+            log_message = f"response: {response.text}"
+
+        await ctx.log(level="info", message=log_message)
+        logger.info(log_message)
 
         response.raise_for_status()
         return response
@@ -280,6 +287,179 @@ async def search_charts(
         return json.dumps(charts, indent=2)
     else:
         return f"Error: {response.status_code} - {response.text}"
+
+
+@mcp.tool()
+async def create_chart(
+    ctx: Context,
+    title: Annotated[
+        str,
+        Field(
+            description="Title of your visualization. This will be the visualization headline."
+        ),
+    ],
+    theme: Annotated[
+        str, Field(description="Chart theme to use.", min_length=2)
+    ] = "datawrapper",
+    type: Annotated[
+        Literal[
+            "d3-bars",
+            "d3-bars-split",
+            "d3-bars-stacked",
+            "d3-bars-bullet",
+            "d3-dot-plot",
+            "d3-range-plot",
+            "d3-arrow-plot",
+            "column-chart",
+            "grouped-column-chart",
+            "stacked-column-chart",
+            "d3-area",
+            "d3-lines",
+            "multiple-lines",
+            "d3-pies",
+            "d3-donuts",
+            "d3-multiple-pies",
+            "d3-multiple-donuts",
+            "d3-scatter-plot",
+            "election-donut-chart",
+            "tables",
+            "d3-maps-choropleth",
+            "d3-maps-symbols",
+            "locator-map",
+        ],
+        Field(description="Type of chart to create"),
+    ] = "d3-lines",
+    forkable: Annotated[
+        bool,
+        Field(
+            description="Set to true if you want to allow other users to fork this visualization"
+        ),
+    ] = False,
+    organizationId: Annotated[
+        Optional[str],
+        Field(
+            description="ID of the team (formerly known as organization) that the visualization should be created in. The authenticated user must have access to this team."
+        ),
+    ] = None,
+    folderId: Annotated[
+        Optional[int],
+        Field(
+            description="ID of the folder that the visualization should be created in. The authenticated user must have access to this folder."
+        ),
+    ] = None,
+    externalData: Annotated[
+        Optional[str], Field(description="URL of external dataset")
+    ] = None,
+    language: Annotated[
+        Optional[str], Field(description="Visualization locale (e.g., en-US)")
+    ] = None,
+    metadata: Annotated[
+        Optional[Dict], Field(description="Additional metadata for the chart")
+    ] = None,
+) -> str:
+    """Create a new chart"""
+    endpoint = "charts"
+
+    data = {
+        "title": title,
+        "theme": theme,
+        "type": type,
+        "forkable": forkable,
+        "organizationId": organizationId,
+        "folderId": folderId,
+        "externalData": externalData,
+        "language": language,
+    }
+    data = {k: v for k, v in data.items() if v is not None}
+
+    if metadata:
+        data.update(metadata)
+
+    response = await _make_request(ctx, method="POST", endpoint=endpoint, data=data)
+
+    if response.status_code in (200, 201):
+        chart = response.json()
+        chart_id = chart.get("id")
+        return f"Chart created successfully with ID: {chart_id}\n{json.dumps(chart, indent=2)}"
+    else:
+        return f"Error creating chart: {response.status_code} - {response.text}"
+
+
+@mcp.tool()
+async def upload_chart_data(
+    ctx: Context,
+    chart_id: Annotated[
+        str,
+        Field(
+            description="ID of the chart to upload data to", pattern=r"^[a-zA-Z0-9]{5}$"
+        ),
+    ],
+    data: Annotated[
+        str,
+        Field(description="CSV data or custom JSON map to be uploaded to the chart"),
+    ],
+    content_type: Annotated[
+        Literal["text/csv", "application/json"],
+        Field(description="Content type of the data being uploaded"),
+    ] = "text/csv",
+) -> str:
+    """
+    Upload data for a chart or map.
+
+    The data can be in CSV format (comma or semicolon separated) or JSON format.
+    For CSV data, the first row is expected to contain column headers.
+
+    Example CSV data:
+    ```
+    country;Share of population that lives in the capital;in other urban areas;in rural areas
+    Iceland (Reykjavik);56.02;38;6
+    Argentina (Buenos Aires);34.95;56.6;8.4
+    Japan (Tokyo);29.52;63.5;7
+    UK (London);22.7;59.6;17.7
+    Denmark (Copenhagen);22.16;65.3;12.5
+    France (Paris);16.77;62.5;20.7
+    Russia (Moscow);8.39;65.5;26.1
+    Niger (Niamey);5.53;12.9;81.5
+    Germany (Berlin);4.35;70.7;24.9
+    India (Delhi);1.93;30.4;67.6
+    USA (Washington, D.C.);1.54;79.9;18.6
+    China (Beijing);1.4;53;45.6
+    ```
+    """
+    endpoint = f"charts/{chart_id}/data"
+
+    headers = {"Content-Type": content_type}
+
+    response = await _make_request(
+        ctx, method="PUT", endpoint=endpoint, data=data, headers=headers
+    )
+
+    if response.status_code in (200, 204):
+        return f"Data successfully uploaded to chart {chart_id}"
+    else:
+        return f"Error uploading data: {response.status_code} - {response.text}"
+
+
+@mcp.tool()
+async def get_chart_data(
+    ctx: Context,
+    chart_id: Annotated[
+        str,
+        Field(
+            description="ID of the chart to fetch data from",
+            pattern=r"^[a-zA-Z0-9]{5}$",
+        ),
+    ],
+) -> str:
+    """Request the data of a chart, which is usually a CSV"""
+    endpoint = f"charts/{chart_id}/data"
+    response = await _make_request(ctx, method="GET", endpoint=endpoint)
+
+    if response.status_code == 200:
+        # Return the raw data (usually CSV)
+        return response.text
+    else:
+        return f"Error fetching chart data: {response.status_code} - {response.text}"
 
 
 if __name__ == "__main__":
