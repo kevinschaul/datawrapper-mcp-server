@@ -462,6 +462,195 @@ async def get_chart_data(
         return f"Error fetching chart data: {response.status_code} - {response.text}"
 
 
+@mcp.tool()
+async def get_chart_metadata(
+    ctx: Context,
+    chart_id: Annotated[
+        str,
+        Field(
+            description="ID of the chart to fetch data from",
+            pattern=r"^[a-zA-Z0-9]{5}$",
+        ),
+    ],
+) -> str:
+    """Request the metadata of a chart"""
+    endpoint = f"charts/{chart_id}"
+    response = await _make_request(ctx, method="GET", endpoint=endpoint)
+
+    if response.status_code == 200:
+        charts = response.json()
+        return json.dumps(charts, indent=2)
+    else:
+        return (
+            f"Error fetching chart metadata: {response.status_code} - {response.text}"
+        )
+
+
+@mcp.tool()
+async def update_chart_metadata(
+    ctx: Context,
+    chart_id: Annotated[
+        str,
+        Field(
+            description="ID of the chart to update",
+            pattern=r"^[a-zA-Z0-9]{5}$",
+        ),
+    ],
+    title: Annotated[
+        Optional[str],
+        Field(description="Title of your chart. This will be the chart headline."),
+    ] = None,
+    theme: Annotated[
+        Optional[str], Field(description="Chart theme to use.", min_length=2)
+    ] = None,
+    type: Annotated[
+        Optional[
+            Literal[
+                "d3-bars",
+                "d3-bars-split",
+                "d3-bars-stacked",
+                "d3-bars-bullet",
+                "d3-dot-plot",
+                "d3-range-plot",
+                "d3-arrow-plot",
+                "column-chart",
+                "grouped-column-chart",
+                "stacked-column-chart",
+                "d3-area",
+                "d3-lines",
+                "multiple-lines",
+                "d3-pies",
+                "d3-donuts",
+                "d3-multiple-pies",
+                "d3-multiple-donuts",
+                "d3-scatter-plot",
+                "election-donut-chart",
+                "tables",
+                "d3-maps-choropleth",
+                "d3-maps-symbols",
+                "locator-map",
+            ]
+        ],
+        Field(description="Type of the chart"),
+    ] = None,
+    externalData: Annotated[
+        Optional[str], Field(description="URL of external dataset")
+    ] = None,
+    language: Annotated[
+        Optional[str], Field(description="Visualization locale (e.g., en-US)")
+    ] = None,
+    lastEditStep: Annotated[
+        Optional[int],
+        Field(description="Current position in chart editor workflow", ge=1, le=5),
+    ] = None,
+    publicVersion: Annotated[
+        Optional[int], Field(description="Public version of the chart")
+    ] = None,
+    publicUrl: Annotated[
+        Optional[str], Field(description="Public URL of the chart")
+    ] = None,
+    publishedAt: Annotated[Optional[str], Field(description="Publication date")] = None,
+    folderId: Annotated[
+        Optional[int],
+        Field(
+            description="ID of the folder that the visualization should be placed in. The authenticated user must have access to this folder."
+        ),
+    ] = None,
+    organizationId: Annotated[
+        Optional[str],
+        Field(
+            description="ID of the team (formerly known as organization) that the visualization should belong to. The authenticated user must have access to this team."
+        ),
+    ] = None,
+    metadata: Annotated[
+        Optional[Dict], Field(description="Additional metadata for the chart")
+    ] = None,
+    forkable: Annotated[
+        Optional[bool],
+        Field(
+            description="Set to true if you want to allow other users to fork this visualization"
+        ),
+    ] = None,
+) -> str:
+    """Update metadata for an existing chart
+
+    This function allows you to update various properties of an existing chart.
+    Only the properties you specify will be updated; all others will remain unchanged.
+
+    Get the current metadata for an existing chart with get_chart_metadata().
+    """
+    endpoint = f"charts/{chart_id}"
+
+    data = {
+        "title": title,
+        "theme": theme,
+        "type": type,
+        "externalData": externalData,
+        "language": language,
+        "lastEditStep": lastEditStep,
+        "publicVersion": publicVersion,
+        "publicUrl": publicUrl,
+        "publishedAt": publishedAt,
+        "folderId": folderId,
+        "organizationId": organizationId,
+        "forkable": forkable,
+    }
+    data = {k: v for k, v in data.items() if v is not None}
+
+    if metadata is not None:
+        data.update(metadata)
+
+    if not data:
+        return "No update parameters provided. Chart remains unchanged."
+
+    response = await _make_request(
+        ctx, method="PATCH", endpoint=endpoint, json_data=data
+    )
+
+    if response.status_code in (200, 204):
+        return f"Chart {chart_id} updated successfully\n{json.dumps(response.json(), indent=2) if response.text else 'No content returned'}"
+    else:
+        return (
+            f"Error updating chart metadata: {response.status_code} - {response.text}"
+        )
+
+
+@mcp.tool()
+async def list_themes(
+    ctx: Context,
+    limit: Annotated[
+        int,
+        Field(
+            description="Maximum items to fetch. Useful for pagination.",
+            ge=0,
+            default=100,
+        ),
+    ] = 100,
+    offset: Annotated[
+        int,
+        Field(
+            description="Number of items to skip. Useful for pagination.",
+            ge=0,
+            default=0,
+        ),
+    ] = 0,
+    deleted: Annotated[
+        bool, Field(description="Whether to include deleted themes.", default=False)
+    ] = False,
+) -> str:
+    """Get a list of themes accessible by the authenticated user"""
+    endpoint = "themes"
+
+    params = {"limit": limit, "offset": offset, "deleted": deleted}
+    response = await _make_request(ctx, method="GET", endpoint=endpoint, params=params)
+
+    if response.status_code == 200:
+        themes = response.json()
+        return json.dumps(themes, indent=2)
+    else:
+        return f"Error fetching themes: {response.status_code} - {response.text}"
+
+
 if __name__ == "__main__":
     logger.info("Starting Datawrapper MCP server")
     mcp.run()
