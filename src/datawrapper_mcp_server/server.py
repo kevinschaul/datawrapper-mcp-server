@@ -5,11 +5,17 @@ from typing import Optional, Dict, Any, Union
 from mcp.server.fastmcp import Context, FastMCP, Image
 import logging
 
-API_KEY = os.environ.get("DATAWRAPPER_MCP_API_KEY", "")
-API_BASE_URL = "https://api.datawrapper.de/v3"
-DIRECTORY = os.environ.get("DATAWRAPPER_MCP_DIRECTORY", "")
 
-# TODO bail if API_KEY or DIRECTORY are missing
+def get_required_env(key):
+    value = os.environ.get(key)
+    if not value:
+        raise ValueError(f"{key} environment variable is not set")
+    return value
+
+
+API_BASE_URL = "https://api.datawrapper.de/v3"
+API_KEY = get_required_env("DATAWRAPPER_MCP_API_KEY")
+DIRECTORY = get_required_env("DATAWRAPPER_MCP_DIRECTORY")
 
 logger = logging.getLogger("datawrapper_mcp")
 
