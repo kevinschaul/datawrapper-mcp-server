@@ -27,6 +27,9 @@ set dotenv-load
 @dev:
   npx @modelcontextprotocol/inspector -e DATAWRAPPER_MCP_API_KEY=${DATAWRAPPER_MCP_API_KEY} -- uv run src/datawrapper_mcp_server/server.py
 
+@logs-claude:
+  tail -f ~/Library/Logs/Claude/mcp-server-datawrapper.log
+
 # @run-export-chart:
 #   npx @modelcontextprotocol/inspector -e DATAWRAPPER_MCP_API_KEY=${DATAWRAPPER_MCP_API_KEY} --cli uv run src/datawrapper_mcp_server/server.py --method tools/call --tool-name export_chart --tool-arg chart_id=Yzbqd --tool-arg filepath=Yzbqd.png
 

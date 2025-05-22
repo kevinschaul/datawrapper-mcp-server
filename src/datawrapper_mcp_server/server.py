@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 import httpx
 from typing import Annotated, Literal, Optional, Dict, Any
@@ -206,6 +207,79 @@ async def export_chart(
     response = await _make_request(ctx, method="GET", endpoint=endpoint, params=params)
     final_path = write_file(DIRECTORY, filepath, response.content)
     return f"Chart exported to {final_path}"
+
+
+@mcp.tool()
+async def search_charts(
+    ctx: Context,
+    userId: Annotated[
+        Optional[int], Field(description="User id of visualization author")
+    ] = None,
+    authorId: Annotated[
+        Optional[int], Field(description="User id of visualization author")
+    ] = None,
+    published: Annotated[
+        Optional[bool], Field(description="Flag to filter results by publish status")
+    ] = None,
+    search: Annotated[
+        Optional[str], Field(description="Search for charts with a specific title")
+    ] = None,
+    folderId: Annotated[
+        Optional[int], Field(description="List visualizations inside a specific folder")
+    ] = None,
+    teamId: Annotated[
+        Optional[str],
+        Field(
+            description="List visualizations belonging to a specific team. Use teamId=null to search for user visualizations not part of a team"
+        ),
+    ] = None,
+    order: Annotated[
+        Literal["ASC", "DESC"],
+        Field(description="Result order (ascending or descending)"),
+    ] = "DESC",
+    orderBy: Annotated[str, Field(description="Attribute to order by")] = "createdAt",
+    limit: Annotated[
+        int, Field(description="Maximum items to fetch. Useful for pagination.", ge=1)
+    ] = 100,
+    offset: Annotated[
+        int, Field(description="Number of items to skip. Useful for pagination.", ge=0)
+    ] = 0,
+    minLastEditStep: Annotated[
+        Optional[int],
+        Field(
+            description="Filter visualizations by the last editor step they've been opened in (1=upload, 2=describe, 3=visualize, etc)",
+            ge=0,
+            le=5,
+        ),
+    ] = None,
+    expand: Annotated[
+        bool, Field(description="Whether to include full chart metadata")
+    ] = False,
+) -> str:
+    """Search and filter a list of your charts"""
+    endpoint = "charts"
+    params = {
+        "userId": userId,
+        "authorId": authorId,
+        "published": published,
+        "search": search,
+        "folderId": folderId,
+        "teamId": teamId,
+        "order": order,
+        "orderBy": orderBy,
+        "limit": limit,
+        "offset": offset,
+        "minLastEditStep": minLastEditStep,
+        "expand": expand,
+    }
+    params = {k: v for k, v in params.items() if v is not None}
+    response = await _make_request(ctx, method="GET", endpoint=endpoint, params=params)
+
+    if response.status_code == 200:
+        charts = response.json()
+        return json.dumps(charts, indent=2)
+    else:
+        return f"Error: {response.status_code} - {response.text}"
 
 
 if __name__ == "__main__":
