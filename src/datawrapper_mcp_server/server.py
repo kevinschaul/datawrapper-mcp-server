@@ -1,15 +1,17 @@
 import os
-import json
-from pathlib import Path
-import httpx
-from typing import Annotated, Literal, Optional, Dict, Any
-from mcp.server.fastmcp import Context, FastMCP, Image
 import logging
+from pathlib import Path
+from typing import Annotated, Literal, Optional, Dict, Any
 
+import httpx
 from pydantic import Field
+from mcp.server.fastmcp import Context, FastMCP, Image
+
+logger = logging.getLogger("datawrapper_mcp")
 
 
-def get_required_env(key):
+def get_required_env(key: str) -> str:
+    """Get a required environment variable or raise an error if not set"""
     value = os.environ.get(key)
     if not value:
         raise ValueError(f"{key} environment variable is not set")
@@ -20,7 +22,31 @@ API_BASE_URL = "https://api.datawrapper.de/v3"
 API_KEY = get_required_env("DATAWRAPPER_MCP_API_KEY")
 DIRECTORY = Path(get_required_env("DATAWRAPPER_MCP_DIRECTORY"))
 
-logger = logging.getLogger("datawrapper_mcp")
+CHART_TYPES = Literal[
+    "d3-bars",
+    "d3-bars-split",
+    "d3-bars-stacked",
+    "d3-bars-bullet",
+    "d3-dot-plot",
+    "d3-range-plot",
+    "d3-arrow-plot",
+    "column-chart",
+    "grouped-column-chart",
+    "stacked-column-chart",
+    "d3-area",
+    "d3-lines",
+    "multiple-lines",
+    "d3-pies",
+    "d3-donuts",
+    "d3-multiple-pies",
+    "d3-multiple-donuts",
+    "election-donut-chart",
+    "d3-scatter-plot",
+    "tables",
+    "d3-maps-choropleth",
+    "d3-maps-symbols",
+    "locator-map",
+]
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 logging.basicConfig(
@@ -28,7 +54,6 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.DEBUG,
 )
-
 
 mcp = FastMCP(
     name="datawrapper",
@@ -48,11 +73,23 @@ async def _make_request(
 ) -> httpx.Response:
     """
     Helper function to make API requests to Datawrapper
-    """
-    if headers is None:
-        headers = {}
 
+    Args:
+        ctx: The MCP context for logging
+        method: HTTP method (GET, POST, etc.)
+        endpoint: API endpoint path
+        headers: Optional HTTP headers
+        params: Optional query parameters
+        data: Optional request body data
+        json_data: Optional JSON request body
+        files: Optional files to upload
+
+    Returns:
+        The HTTP response object
+    """
+    headers = headers or {}
     headers["Authorization"] = f"Bearer {API_KEY}"
+
     url = f"{API_BASE_URL}/{endpoint}"
 
     async with httpx.AsyncClient(timeout=10) as client:
@@ -65,16 +102,18 @@ async def _make_request(
             "json": json_data,
             "files": files,
         }
-        logger.info(request_params)
+        request_params = {k: v for k, v in request_params.items() if v is not None}
+        logger.info(f"Request: {method} {url}")
         response = await client.request(**request_params)
 
+        # Handle logging based on content type
         content_type = response.headers.get("content-type", "")
         if content_type and (
             "image" in content_type or "application/octet-stream" in content_type
         ):
-            log_message = f"response: <binary data> [{len(response.content)} bytes]"
+            log_message = f"Response: <binary data> [{len(response.content)} bytes]"
         else:
-            log_message = f"response: {response.text}"
+            log_message = f"Response: {response.status_code} - {response.text[:200]}{'...' if len(response.text) > 200 else ''}"
 
         await ctx.log(level="info", message=log_message)
         logger.info(log_message)
@@ -85,17 +124,21 @@ async def _make_request(
 
 def write_file(base_dir: Path, file_path: Path, content: bytes) -> Path:
     """
-    Writes content to a file with proper filename sanitization.
+    Writes content to a file with proper filename sanitization and security checks.
+
     Args:
         base_dir: The allowed base directory to write inside of
         file_path: The relative path of the file within base_dir (can include subdirectories)
         content: The binary content to write to the file
+
     Raises:
         ValueError: If the file_path is invalid or attempts to access parent directories
-    Returns: The sanitized filepath that was written to
+        IOError: If writing to the file fails
+
+    Returns:
+        The sanitized filepath that was written to
     """
-    logger.info(f"write_file: {file_path}")
-    logger.info(f"os.getcwd(): {os.getcwd()}")
+    logger.info(f"Writing file: {file_path}")
 
     if not file_path.name:
         raise ValueError("Invalid file path: empty filename")
@@ -110,14 +153,17 @@ def write_file(base_dir: Path, file_path: Path, content: bytes) -> Path:
     target_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not target_path.resolve().is_relative_to(base_dir.resolve()):
-        raise ValueError(f"Invalid path: {file_path} attempts to escape base directory")
+        raise ValueError(
+            f"Security error: Path '{file_path}' attempts to escape base directory"
+        )
 
     try:
         with target_path.open("wb") as f:
             f.write(content)
+        logger.info(f"Successfully wrote {len(content)} bytes to {target_path}")
         return target_path
     except Exception as e:
-        logger.error(e)
+        logger.error(f"File write error: {e}")
         raise IOError(f"Failed to write to file: {str(e)}")
 
 
@@ -128,9 +174,9 @@ async def preview_chart(
         str, Field(pattern=r"^[a-zA-Z0-9]{5}$", description="Chart ID")
     ],
 ) -> Image:
-    """View a chart image"""
+    """View a screenshot of the chart as a PNG image"""
     endpoint = f"charts/{chart_id}/export/png"
-    response = await _make_request(ctx, method="GET", endpoint=endpoint, params={})
+    response = await _make_request(ctx, method="GET", endpoint=endpoint)
     return Image(data=response.content, format="png")
 
 
@@ -142,7 +188,7 @@ async def export_chart(
     ],
     filepath: Annotated[Path, Field(description="File to save chart to")],
     format: Annotated[
-        Literal["png", "pdf", "svg", "html"], Field(description="Export format")
+        Literal["png", "pdf", "svg"], Field(description="Export format")
     ] = "png",
     width: Annotated[
         Optional[int], Field(description="Width of the chart", ge=1)
@@ -152,9 +198,7 @@ async def export_chart(
     ] = None,
     unit: Annotated[
         Literal["px", "mm", "in"],
-        Field(
-            description="Defines the unit in which the borderWidth, height and width will be measured in"
-        ),
+        Field(description="Unit for measurements (borderWidth, height, width)"),
     ] = "px",
     mode: Annotated[
         Literal["rgb", "cmyk"], Field(description="Color mode (pdf format only)")
@@ -165,6 +209,10 @@ async def export_chart(
     zoom: Annotated[
         float, Field(description="Zoom level for the chart (png format only)")
     ] = 2,
+    transparent: Annotated[
+        bool,
+        Field(description="Whether to use transparent background (png format only)"),
+    ] = False,
     borderWidth: Annotated[
         Optional[int], Field(description="Width of the chart border")
     ] = None,
@@ -174,37 +222,32 @@ async def export_chart(
     plain: Annotated[
         bool,
         Field(
-            description="Defines if only the visualization should be exported (true), or if it should include header and footer as well (false)"
+            description="Export only the visualization (true) or include header/footer (false)"
         ),
     ] = False,
-    # TODO what is fullVector?
     fullVector: Annotated[
         bool, Field(description="Whether to use full vector graphics")
     ] = False,
     ligatures: Annotated[bool, Field(description="Whether to use ligatures")] = True,
-    transparent: Annotated[
-        bool,
-        Field(description="Whether to use transparent background (png format only)"),
-    ] = False,
     logo: Annotated[str, Field(description="Logo display setting")] = "auto",
     logoId: Annotated[Optional[str], Field(description="ID of the logo to use")] = None,
     dark: Annotated[bool, Field(description="Whether to use dark mode")] = False,
 ) -> str:
-    """Export a chart to different formats"""
+    """Export a chart to different formats (PNG, PDF, SVG)"""
     endpoint = f"charts/{chart_id}/export/{format}"
     params = {
         "width": width,
         "height": height,
         "unit": unit,
-        "mode": mode,
-        "scale": scale,
-        "zoom": zoom,
+        "mode": mode if format.lower() == "pdf" else None,
+        "scale": scale if format.lower() == "pdf" else None,
+        "zoom": zoom if format.lower() == "png" else None,
+        "transparent": transparent if format.lower() == "png" else None,
         "borderWidth": borderWidth,
         "borderColor": borderColor,
         "plain": plain,
         "fullVector": fullVector,
         "ligatures": ligatures,
-        "transparent": transparent if format.lower() == "png" else None,
         "logo": logo,
         "logoId": logoId,
         "dark": dark,
@@ -220,13 +263,14 @@ async def export_chart(
 async def search_charts(
     ctx: Context,
     userId: Annotated[
-        Optional[int], Field(description="User id of visualization author")
+        Optional[int], Field(description="User ID of visualization author")
     ] = None,
     authorId: Annotated[
-        Optional[int], Field(description="User id of visualization author")
+        Optional[int],
+        Field(description="User ID of visualization author (alternative)"),
     ] = None,
     published: Annotated[
-        Optional[bool], Field(description="Flag to filter results by publish status")
+        Optional[bool], Field(description="Filter by publish status")
     ] = None,
     search: Annotated[
         Optional[str], Field(description="Search for charts with a specific title")
@@ -237,7 +281,7 @@ async def search_charts(
     teamId: Annotated[
         Optional[str],
         Field(
-            description="List visualizations belonging to a specific team. Use teamId=null to search for user visualizations not part of a team"
+            description="List visualizations for a specific team (use teamId=null for user visualizations not in a team)"
         ),
     ] = None,
     order: Annotated[
@@ -245,16 +289,12 @@ async def search_charts(
         Field(description="Result order (ascending or descending)"),
     ] = "DESC",
     orderBy: Annotated[str, Field(description="Attribute to order by")] = "createdAt",
-    limit: Annotated[
-        int, Field(description="Maximum items to fetch. Useful for pagination.", ge=1)
-    ] = 100,
-    offset: Annotated[
-        int, Field(description="Number of items to skip. Useful for pagination.", ge=0)
-    ] = 0,
+    limit: Annotated[int, Field(description="Maximum items to fetch", ge=1)] = 100,
+    offset: Annotated[int, Field(description="Number of items to skip", ge=0)] = 0,
     minLastEditStep: Annotated[
         Optional[int],
         Field(
-            description="Filter visualizations by the last editor step they've been opened in (1=upload, 2=describe, 3=visualize, etc)",
+            description="Filter by last editor step (1=upload, 2=describe, 3=visualize, etc)",
             ge=0,
             le=5,
         ),
@@ -281,12 +321,7 @@ async def search_charts(
     }
     params = {k: v for k, v in params.items() if v is not None}
     response = await _make_request(ctx, method="GET", endpoint=endpoint, params=params)
-
-    if response.status_code == 200:
-        charts = response.json()
-        return json.dumps(charts, indent=2)
-    else:
-        return f"Error: {response.status_code} - {response.text}"
+    return response.json()
 
 
 @mcp.tool()
@@ -302,50 +337,20 @@ async def create_chart(
         str, Field(description="Chart theme to use.", min_length=2)
     ] = "datawrapper",
     type: Annotated[
-        Literal[
-            "d3-bars",
-            "d3-bars-split",
-            "d3-bars-stacked",
-            "d3-bars-bullet",
-            "d3-dot-plot",
-            "d3-range-plot",
-            "d3-arrow-plot",
-            "column-chart",
-            "grouped-column-chart",
-            "stacked-column-chart",
-            "d3-area",
-            "d3-lines",
-            "multiple-lines",
-            "d3-pies",
-            "d3-donuts",
-            "d3-multiple-pies",
-            "d3-multiple-donuts",
-            "d3-scatter-plot",
-            "election-donut-chart",
-            "tables",
-            "d3-maps-choropleth",
-            "d3-maps-symbols",
-            "locator-map",
-        ],
+        CHART_TYPES,
         Field(description="Type of chart to create"),
     ] = "d3-lines",
     forkable: Annotated[
         bool,
-        Field(
-            description="Set to true if you want to allow other users to fork this visualization"
-        ),
+        Field(description="Allow other users to fork this visualization"),
     ] = False,
     organizationId: Annotated[
         Optional[str],
-        Field(
-            description="ID of the team (formerly known as organization) that the visualization should be created in. The authenticated user must have access to this team."
-        ),
+        Field(description="Team ID that should own the visualization"),
     ] = None,
     folderId: Annotated[
         Optional[int],
-        Field(
-            description="ID of the folder that the visualization should be created in. The authenticated user must have access to this folder."
-        ),
+        Field(description="Folder ID to store the visualization in"),
     ] = None,
     externalData: Annotated[
         Optional[str], Field(description="URL of external dataset")
@@ -354,12 +359,11 @@ async def create_chart(
         Optional[str], Field(description="Visualization locale (e.g., en-US)")
     ] = None,
     metadata: Annotated[
-        Optional[Dict], Field(description="Additional metadata for the chart")
+        Optional[Dict[str, Any]], Field(description="Additional metadata for the chart")
     ] = None,
 ) -> str:
-    """Create a new chart"""
+    """Create a new chart with the specified properties"""
     endpoint = "charts"
-
     data = {
         "title": title,
         "theme": theme,
@@ -376,13 +380,7 @@ async def create_chart(
         data.update(metadata)
 
     response = await _make_request(ctx, method="POST", endpoint=endpoint, data=data)
-
-    if response.status_code in (200, 201):
-        chart = response.json()
-        chart_id = chart.get("id")
-        return f"Chart created successfully with ID: {chart_id}\n{json.dumps(chart, indent=2)}"
-    else:
-        return f"Error creating chart: {response.status_code} - {response.text}"
+    return response.json()
 
 
 @mcp.tool()
@@ -427,17 +425,11 @@ async def upload_chart_data(
     ```
     """
     endpoint = f"charts/{chart_id}/data"
-
     headers = {"Content-Type": content_type}
-
     response = await _make_request(
         ctx, method="PUT", endpoint=endpoint, data=data, headers=headers
     )
-
-    if response.status_code in (200, 204):
-        return f"Data successfully uploaded to chart {chart_id}"
-    else:
-        return f"Error uploading data: {response.status_code} - {response.text}"
+    return response.json()
 
 
 @mcp.tool()
@@ -455,11 +447,8 @@ async def get_chart_data(
     endpoint = f"charts/{chart_id}/data"
     response = await _make_request(ctx, method="GET", endpoint=endpoint)
 
-    if response.status_code == 200:
-        # Return the raw data (usually CSV)
-        return response.text
-    else:
-        return f"Error fetching chart data: {response.status_code} - {response.text}"
+    # Return the raw data (usually CSV)
+    return response.text
 
 
 @mcp.tool()
@@ -468,22 +457,15 @@ async def get_chart_metadata(
     chart_id: Annotated[
         str,
         Field(
-            description="ID of the chart to fetch data from",
+            description="ID of the chart to fetch metadata from",
             pattern=r"^[a-zA-Z0-9]{5}$",
         ),
     ],
 ) -> str:
-    """Request the metadata of a chart"""
+    """Request the metadata of a chart including title, type, theme, and other properties"""
     endpoint = f"charts/{chart_id}"
     response = await _make_request(ctx, method="GET", endpoint=endpoint)
-
-    if response.status_code == 200:
-        charts = response.json()
-        return json.dumps(charts, indent=2)
-    else:
-        return (
-            f"Error fetching chart metadata: {response.status_code} - {response.text}"
-        )
+    return response.json()
 
 
 @mcp.tool()
@@ -504,33 +486,7 @@ async def update_chart_metadata(
         Optional[str], Field(description="Chart theme to use.", min_length=2)
     ] = None,
     type: Annotated[
-        Optional[
-            Literal[
-                "d3-bars",
-                "d3-bars-split",
-                "d3-bars-stacked",
-                "d3-bars-bullet",
-                "d3-dot-plot",
-                "d3-range-plot",
-                "d3-arrow-plot",
-                "column-chart",
-                "grouped-column-chart",
-                "stacked-column-chart",
-                "d3-area",
-                "d3-lines",
-                "multiple-lines",
-                "d3-pies",
-                "d3-donuts",
-                "d3-multiple-pies",
-                "d3-multiple-donuts",
-                "d3-scatter-plot",
-                "election-donut-chart",
-                "tables",
-                "d3-maps-choropleth",
-                "d3-maps-symbols",
-                "locator-map",
-            ]
-        ],
+        Optional[CHART_TYPES],
         Field(description="Type of the chart"),
     ] = None,
     externalData: Annotated[
@@ -552,24 +508,18 @@ async def update_chart_metadata(
     publishedAt: Annotated[Optional[str], Field(description="Publication date")] = None,
     folderId: Annotated[
         Optional[int],
-        Field(
-            description="ID of the folder that the visualization should be placed in. The authenticated user must have access to this folder."
-        ),
+        Field(description="ID of the folder to place the visualization in"),
     ] = None,
     organizationId: Annotated[
         Optional[str],
-        Field(
-            description="ID of the team (formerly known as organization) that the visualization should belong to. The authenticated user must have access to this team."
-        ),
+        Field(description="ID of the team that should own the visualization"),
     ] = None,
     metadata: Annotated[
-        Optional[Dict], Field(description="Additional metadata for the chart")
+        Optional[Dict[str, Any]], Field(description="Additional metadata for the chart")
     ] = None,
     forkable: Annotated[
         Optional[bool],
-        Field(
-            description="Set to true if you want to allow other users to fork this visualization"
-        ),
+        Field(description="Allow other users to fork this visualization"),
     ] = None,
 ) -> str:
     """Update metadata for an existing chart
@@ -580,7 +530,6 @@ async def update_chart_metadata(
     Get the current metadata for an existing chart with get_chart_metadata().
     """
     endpoint = f"charts/{chart_id}"
-
     data = {
         "title": title,
         "theme": theme,
@@ -606,13 +555,7 @@ async def update_chart_metadata(
     response = await _make_request(
         ctx, method="PATCH", endpoint=endpoint, json_data=data
     )
-
-    if response.status_code in (200, 204):
-        return f"Chart {chart_id} updated successfully\n{json.dumps(response.json(), indent=2) if response.text else 'No content returned'}"
-    else:
-        return (
-            f"Error updating chart metadata: {response.status_code} - {response.text}"
-        )
+    return response.json()
 
 
 @mcp.tool()
@@ -621,36 +564,29 @@ async def list_themes(
     limit: Annotated[
         int,
         Field(
-            description="Maximum items to fetch. Useful for pagination.",
+            description="Maximum number of themes to fetch",
             ge=0,
-            default=100,
         ),
     ] = 100,
     offset: Annotated[
         int,
         Field(
-            description="Number of items to skip. Useful for pagination.",
+            description="Number of themes to skip",
             ge=0,
-            default=0,
         ),
     ] = 0,
-    deleted: Annotated[
-        bool, Field(description="Whether to include deleted themes.", default=False)
-    ] = False,
+    deleted: Annotated[bool, Field(description="Include deleted themes")] = False,
 ) -> str:
     """Get a list of themes accessible by the authenticated user"""
     endpoint = "themes"
-
     params = {"limit": limit, "offset": offset, "deleted": deleted}
     response = await _make_request(ctx, method="GET", endpoint=endpoint, params=params)
-
-    if response.status_code == 200:
-        themes = response.json()
-        return json.dumps(themes, indent=2)
-    else:
-        return f"Error fetching themes: {response.status_code} - {response.text}"
+    return response.json()
 
 
 if __name__ == "__main__":
     logger.info("Starting Datawrapper MCP server")
-    mcp.run()
+    try:
+        mcp.run()
+    except Exception as e:
+        logger.critical(f"Failed to start MCP server: {e}", exc_info=True)
