@@ -1,9 +1,11 @@
 import os
 from pathlib import Path
 import httpx
-from typing import Optional, Dict, Any, Union
+from typing import Annotated, Literal, Optional, Dict, Any
 from mcp.server.fastmcp import Context, FastMCP, Image
 import logging
+
+from pydantic import Field
 
 
 def get_required_env(key):
@@ -15,7 +17,7 @@ def get_required_env(key):
 
 API_BASE_URL = "https://api.datawrapper.de/v3"
 API_KEY = get_required_env("DATAWRAPPER_MCP_API_KEY")
-DIRECTORY = get_required_env("DATAWRAPPER_MCP_DIRECTORY")
+DIRECTORY = Path(get_required_env("DATAWRAPPER_MCP_DIRECTORY"))
 
 logger = logging.getLogger("datawrapper_mcp")
 
@@ -73,113 +75,133 @@ async def _make_request(
         return response
 
 
-def write_file(directory: str, filename: str, content: bytes) -> Path:
+def write_file(base_dir: Path, file_path: Path, content: bytes) -> Path:
     """
     Writes content to a file with proper filename sanitization.
-
     Args:
-        directory: The allowed directory to write inside of
-        filename: The name of the file to write to
+        base_dir: The allowed base directory to write inside of
+        file_path: The relative path of the file within base_dir (can include subdirectories)
         content: The binary content to write to the file
-
     Raises:
-        ValueError: If the filename is invalid or attempts to access parent directories
-
+        ValueError: If the file_path is invalid or attempts to access parent directories
     Returns: The sanitized filepath that was written to
     """
-    logger.info(f"write_file: {filename}")
+    logger.info(f"write_file: {file_path}")
     logger.info(f"os.getcwd(): {os.getcwd()}")
 
-    if (
-        not filename
-        or ".." in filename
-        or filename.startswith("/")
-        or filename.startswith("\\")
-    ):
-        raise ValueError("Invalid filename: potential directory traversal attempt")
+    if not file_path.name:
+        raise ValueError("Invalid file path: empty filename")
 
-    Path(directory).mkdir(parents=True, exist_ok=True)
-    safe_path = Path(directory) / Path(filename).name
+    file_path_str = str(file_path)
+    if file_path_str.startswith("/") or file_path_str.startswith("\\"):
+        raise ValueError("Invalid file path: must be relative, not absolute")
 
-    if not safe_path.resolve().is_relative_to(Path(directory).resolve()):
-        raise ValueError(f"Invalid path: {filename} attempts to escape directory")
+    base_dir.mkdir(parents=True, exist_ok=True)
+
+    target_path = base_dir / file_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not target_path.resolve().is_relative_to(base_dir.resolve()):
+        raise ValueError(f"Invalid path: {file_path} attempts to escape base directory")
 
     try:
-        with open(safe_path, "wb") as f:
+        with target_path.open("wb") as f:
             f.write(content)
-        return safe_path
+        return target_path
     except Exception as e:
         logger.error(e)
         raise IOError(f"Failed to write to file: {str(e)}")
 
 
 @mcp.tool()
-async def get_chart_image(chart_id: str, ctx: Context) -> Union[str, Image]:
-    """
-    Get image for a specific chart
-
-    Args:
-        chart_id: ID of the chart to get image for
-
-    Returns:
-        The chart as an image
-    """
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                f"{API_BASE_URL}/charts/{chart_id}/export/png",
-                headers={"Authorization": f"Bearer {API_KEY}"},
-            )
-
-            if response.status_code >= 400:
-                return f"Error getting chart image: HTTP {response.status_code} - {response.text}"
-
-            return Image(data=response.content, format="png")
-
-    except Exception as e:
-        return f"Error getting chart image: {str(e)}"
+async def preview_chart(
+    ctx: Context,
+    chart_id: Annotated[
+        str, Field(pattern=r"^[a-zA-Z0-9]{5}$", description="Chart ID")
+    ],
+) -> Image:
+    """View a chart image"""
+    endpoint = f"charts/{chart_id}/export/png"
+    response = await _make_request(ctx, method="GET", endpoint=endpoint, params={})
+    return Image(data=response.content, format="png")
 
 
 @mcp.tool()
 async def export_chart(
     ctx: Context,
-    chart_id: str,
-    filepath: str,
-    format: str = "png",
-    width: Optional[int] = None,
-    height: Optional[int] = None,
-    plain: bool = False,
-    transparent: bool = False,
+    chart_id: Annotated[
+        str, Field(pattern=r"^[a-zA-Z0-9]{5}$", description="Chart ID")
+    ],
+    filepath: Annotated[Path, Field(description="File to save chart to")],
+    format: Annotated[
+        Literal["png", "pdf", "svg", "html"], Field(description="Export format")
+    ] = "png",
+    width: Annotated[
+        Optional[int], Field(description="Width of the chart", ge=1)
+    ] = None,
+    height: Annotated[
+        Optional[int], Field(description="Height of the chart", ge=1)
+    ] = None,
+    unit: Annotated[
+        Literal["px", "mm", "in"],
+        Field(
+            description="Defines the unit in which the borderWidth, height and width will be measured in"
+        ),
+    ] = "px",
+    mode: Annotated[
+        Literal["rgb", "cmyk"], Field(description="Color mode (pdf format only)")
+    ] = "rgb",
+    scale: Annotated[
+        float, Field(description="Scale factor for the chart (pdf format only)")
+    ] = 1,
+    zoom: Annotated[
+        float, Field(description="Zoom level for the chart (png format only)")
+    ] = 2,
+    borderWidth: Annotated[
+        Optional[int], Field(description="Width of the chart border")
+    ] = None,
+    borderColor: Annotated[
+        Optional[str], Field(description="Color of the chart border")
+    ] = None,
+    plain: Annotated[
+        bool,
+        Field(
+            description="Defines if only the visualization should be exported (true), or if it should include header and footer as well (false)"
+        ),
+    ] = False,
+    # TODO what is fullVector?
+    fullVector: Annotated[
+        bool, Field(description="Whether to use full vector graphics")
+    ] = False,
+    ligatures: Annotated[bool, Field(description="Whether to use ligatures")] = True,
+    transparent: Annotated[
+        bool,
+        Field(description="Whether to use transparent background (png format only)"),
+    ] = False,
+    logo: Annotated[str, Field(description="Logo display setting")] = "auto",
+    logoId: Annotated[Optional[str], Field(description="ID of the logo to use")] = None,
+    dark: Annotated[bool, Field(description="Whether to use dark mode")] = False,
 ) -> str:
-    """
-    Export a chart to different formats
-
-    Args:
-        chart_id: ID of the chart to export
-        format: Export format (png, pdf, svg, or html)
-        filepath: File name to save chart to
-        width: Image width in pixels (optional)
-        height: Image height in pixels (optional)
-        plain: Whether to export without Datawrapper branding (optional)
-        transparent: Whether to use transparent background (PNG only, optional)
-
-    Returns:
-        JSON response with export details
-    """
+    """Export a chart to different formats"""
     endpoint = f"charts/{chart_id}/export/{format}"
-    params = {}
-
-    if width:
-        params["width"] = width
-
-    if height:
-        params["height"] = height
-
-    if plain:
-        params["plain"] = "true"
-
-    if transparent and format.lower() == "png":
-        params["transparent"] = "true"
+    params = {
+        "width": width,
+        "height": height,
+        "unit": unit,
+        "mode": mode,
+        "scale": scale,
+        "zoom": zoom,
+        "borderWidth": borderWidth,
+        "borderColor": borderColor,
+        "plain": plain,
+        "fullVector": fullVector,
+        "ligatures": ligatures,
+        "transparent": transparent if format.lower() == "png" else None,
+        "logo": logo,
+        "logoId": logoId,
+        "dark": dark,
+    }
+    params = {k: v for k, v in params.items() if v is not None}
 
     response = await _make_request(ctx, method="GET", endpoint=endpoint, params=params)
     final_path = write_file(DIRECTORY, filepath, response.content)

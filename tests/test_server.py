@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from mcp.types import TextContent
 import pytest
@@ -12,21 +13,21 @@ from datawrapper_mcp_server.server import mcp
 @pytest.mark.asyncio
 async def test_tool_functionality(httpx_mock: HTTPXMock):
     httpx_mock.add_response(
-        url="https://api.datawrapper.de/v3/charts/ZZZZZZ/export/png",
+        url=re.compile("https://api.datawrapper.de/v3/charts/ZZZZZ/export/png*"),
         content=b"some fake image bytes",
     )
 
     with patch(
         "datawrapper_mcp_server.server.write_file", new=Mock()
     ) as mock_write_file:
-        mock_write_file.return_value = Path("/tmp/ZZZZZZ.png")
+        mock_write_file.return_value = Path("/tmp/ZZZZZ.png")
 
         async with client_session(mcp._mcp_server) as client:
             result = await client.call_tool(
-                "export_chart", {"chart_id": "ZZZZZZ", "filepath": "ZZZZZZ.png"}
+                "export_chart", {"chart_id": "ZZZZZ", "filepath": "ZZZZZ.png"}
             )
             assert not result.isError
             assert len(result.content) == 1
             assert isinstance(result.content[0], TextContent)
-            assert result.content[0].text == "Chart exported to /tmp/ZZZZZZ.png"
+            assert result.content[0].text == "Chart exported to /tmp/ZZZZZ.png"
             mock_write_file.assert_called_once()
