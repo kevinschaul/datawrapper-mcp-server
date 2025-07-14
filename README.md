@@ -60,4 +60,3 @@ Test this MCP server interactively with [inspector](https://github.com/modelcont
 ```bash
 just dev
 ```
-
