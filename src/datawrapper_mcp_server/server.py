@@ -191,10 +191,10 @@ async def export_chart(
         Literal["png", "pdf", "svg"], Field(description="Export format")
     ] = "png",
     width: Annotated[
-        Optional[int], Field(description="Width of the chart", ge=1)
+        Optional[float], Field(description="Width of the chart", ge=1)
     ] = None,
     height: Annotated[
-        Optional[int], Field(description="Height of the chart", ge=1)
+        Optional[float], Field(description="Height of the chart", ge=1)
     ] = None,
     unit: Annotated[
         Literal["px", "mm", "in"],
