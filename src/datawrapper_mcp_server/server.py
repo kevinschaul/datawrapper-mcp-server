@@ -400,7 +400,7 @@ async def upload_chart_data(
         Literal["text/csv", "application/json"],
         Field(description="Content type of the data being uploaded"),
     ] = "text/csv",
-) -> int:
+):
     """
     Upload data for a chart or map.
 
@@ -429,7 +429,7 @@ async def upload_chart_data(
     response = await _make_request(
         ctx, method="PUT", endpoint=endpoint, data=data, headers=headers
     )
-    return response.status_code
+    return response.json()
 
 
 @mcp.tool()
