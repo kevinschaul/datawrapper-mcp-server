@@ -214,7 +214,7 @@ async def export_chart(
         Field(description="Whether to use transparent background (png format only)"),
     ] = False,
     borderWidth: Annotated[
-        Optional[int], Field(description="Width of the chart border")
+        Optional[float], Field(description="Width of the chart border")
     ] = None,
     borderColor: Annotated[
         Optional[str], Field(description="Color of the chart border")
