@@ -1,5 +1,5 @@
 [project]
-name = "datawrapper"
+name = "datawrapper_mcp_server"
 version = "0.1.0"
 description = "A model context protocol server for interacting with the Datawrapper API"
 readme = "README.md"

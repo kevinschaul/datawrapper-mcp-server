@@ -191,10 +191,10 @@ async def export_chart(
         Literal["png", "pdf", "svg"], Field(description="Export format")
     ] = "png",
     width: Annotated[
-        Optional[int], Field(description="Width of the chart", ge=1)
+        Optional[float], Field(description="Width of the chart", ge=1)
     ] = None,
     height: Annotated[
-        Optional[int], Field(description="Height of the chart", ge=1)
+        Optional[float], Field(description="Height of the chart", ge=1)
     ] = None,
     unit: Annotated[
         Literal["px", "mm", "in"],
@@ -214,7 +214,7 @@ async def export_chart(
         Field(description="Whether to use transparent background (png format only)"),
     ] = False,
     borderWidth: Annotated[
-        Optional[int], Field(description="Width of the chart border")
+        Optional[float], Field(description="Width of the chart border")
     ] = None,
     borderColor: Annotated[
         Optional[str], Field(description="Color of the chart border")
@@ -302,7 +302,7 @@ async def search_charts(
     expand: Annotated[
         bool, Field(description="Whether to include full chart metadata")
     ] = False,
-) -> str:
+):
     """Search and filter a list of your charts"""
     endpoint = "charts"
     params = {
@@ -361,7 +361,7 @@ async def create_chart(
     metadata: Annotated[
         Optional[Dict[str, Any]], Field(description="Additional metadata for the chart")
     ] = None,
-) -> str:
+):
     """Create a new chart with the specified properties"""
     endpoint = "charts"
     data = {
@@ -377,7 +377,7 @@ async def create_chart(
     data = {k: v for k, v in data.items() if v is not None}
 
     if metadata:
-        data.update(metadata)
+        data.update({"metadata": metadata})
 
     response = await _make_request(ctx, method="POST", endpoint=endpoint, data=data)
     return response.json()
@@ -400,7 +400,7 @@ async def upload_chart_data(
         Literal["text/csv", "application/json"],
         Field(description="Content type of the data being uploaded"),
     ] = "text/csv",
-) -> str:
+):
     """
     Upload data for a chart or map.
 
@@ -461,7 +461,7 @@ async def get_chart_metadata(
             pattern=r"^[a-zA-Z0-9]{5}$",
         ),
     ],
-) -> str:
+):
     """Request the metadata of a chart including title, type, theme, and other properties"""
     endpoint = f"charts/{chart_id}"
     response = await _make_request(ctx, method="GET", endpoint=endpoint)
@@ -521,7 +521,7 @@ async def update_chart_metadata(
         Optional[bool],
         Field(description="Allow other users to fork this visualization"),
     ] = None,
-) -> str:
+):
     """Update metadata for an existing chart
 
     This function allows you to update various properties of an existing chart.
@@ -547,7 +547,7 @@ async def update_chart_metadata(
     data = {k: v for k, v in data.items() if v is not None}
 
     if metadata is not None:
-        data.update(metadata)
+        data.update({"metadata": metadata})
 
     if not data:
         return "No update parameters provided. Chart remains unchanged."
@@ -576,7 +576,7 @@ async def list_themes(
         ),
     ] = 0,
     deleted: Annotated[bool, Field(description="Include deleted themes")] = False,
-) -> str:
+):
     """Get a list of themes accessible by the authenticated user"""
     endpoint = "themes"
     params = {"limit": limit, "offset": offset, "deleted": deleted}
