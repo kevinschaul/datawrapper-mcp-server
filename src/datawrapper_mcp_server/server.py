@@ -429,7 +429,12 @@ async def upload_chart_data(
     response = await _make_request(
         ctx, method="PUT", endpoint=endpoint, data=data, headers=headers
     )
-    return response.json()
+
+    # Oddly this API endpoint is returning empty string, so guard against that
+    if response.content:
+        return response.json()
+    else:
+        return f"Status code: {response.status_code}"
 
 
 @mcp.tool()
