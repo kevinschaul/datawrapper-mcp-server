@@ -6,6 +6,8 @@ A model context protocol server for interacting with the Datawrapper API
 
 I've only tested with Claude Desktop on OS X.
 
+See also: [palewire/datawrapper-mcp](https://github.com/palewire/datawrapper-mcp)
+
 ## Installation
 
 1. Create [a Datawrapper API key](https://app.datawrapper.de/account/api-tokens) -- probably make it read-only since this is alpha software!
